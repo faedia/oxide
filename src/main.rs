@@ -4,8 +4,8 @@ use once_cell::sync::Lazy;
 use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
 use std::ffi::CStr;
 use std::mem;
-use std::ptr::null;
 use std::str;
+use winit::event::{ElementState, KeyboardInput, VirtualKeyCode, WindowEvent};
 use winit::{event::Event, event_loop::EventLoop, window::Window, window::WindowBuilder};
 
 static VK_ENTRY: Lazy<Entry> = Lazy::new(|| Entry::linked());
@@ -87,9 +87,13 @@ fn get_command_pool(device: &ash::Device, graphics_q_idx: u32) -> vk::CommandPoo
 }
 
 fn main() {
+    let width = 1280;
+    let height = 720;
     let event_loop = EventLoop::new();
     let window = WindowBuilder::new()
-        .with_inner_size(winit::dpi::LogicalSize::new(1920, 1080))
+        .with_inner_size(winit::dpi::LogicalSize::new(width, height))
+        .with_resizable(false)
+        .with_decorations(true)
         .build(&event_loop)
         .unwrap();
 
@@ -170,9 +174,12 @@ fn main() {
     };
 
     let extent = {
-        vk::Extent2D {
-            width: capabilities.max_image_extent.width,
-            height: capabilities.max_image_extent.height,
+        match capabilities.current_extent.width {
+            u32::MAX => vk::Extent2D {
+                width: width,
+                height: height,
+            },
+            _ => capabilities.current_extent,
         }
     };
 
@@ -302,9 +309,13 @@ fn main() {
     }
     .unwrap();
 
+    println!("Windows size {:?}", window.inner_size());
+
     let mut last_frame = std::time::Instant::now();
     event_loop.run(move |event, _, control_flow| {
         control_flow.set_poll();
+
+        println!("Current event {:?} width current size {:?}", event, window.inner_size());
 
         platform.handle_event(imgui.io_mut(), &window, &event);
 
@@ -338,11 +349,6 @@ fn main() {
                 }
 
                 let draw_data = imgui.render();
-                unsafe {
-                    device
-                        .wait_for_fences(&[fence], true, std::u64::MAX)
-                        .unwrap();
-                }
 
                 let next_image = unsafe {
                     swapchain_loader
@@ -356,6 +362,11 @@ fn main() {
                         .0
                 };
 
+                unsafe {
+                    device
+                        .wait_for_fences(&[fence], true, std::u64::MAX)
+                        .unwrap();
+                }
                 unsafe { device.reset_fences(&[fence]).unwrap() };
 
                 let wait_stages = [vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
@@ -380,10 +391,16 @@ fn main() {
                     let render_pass_begin_info = vk::RenderPassBeginInfo::builder()
                         .render_pass(render_pass)
                         .framebuffer(framebuffers[next_image as usize])
-                        .render_area(vk::Rect2D {
-                            offset: vk::Offset2D { x: 0, y: 0 },
-                            extent,
-                        })
+                        .render_area(
+                            match capabilities.current_extent.width {
+                                u32::MAX => vk::Extent2D {
+                                    width: width,
+                                    height: height,
+                                },
+                                _ => capabilities.current_extent,
+                            }
+                            .into(),
+                        )
                         .clear_values(&[vk::ClearValue {
                             color: vk::ClearColorValue {
                                 float32: [0.0, 0.0, 1.0, 1.0],
@@ -433,11 +450,25 @@ fn main() {
                 let present = unsafe {
                     swapchain_loader
                         .queue_present(graphics_queue, &present_info)
-                        .unwrap()
+                        .expect("Idk what happened we just broke")
                 };
 
                 assert!(!present);
             }
+            Event::WindowEvent {
+                event:
+                    WindowEvent::CloseRequested
+                    | WindowEvent::KeyboardInput {
+                        input:
+                            KeyboardInput {
+                                state: ElementState::Pressed,
+                                virtual_keycode: Some(VirtualKeyCode::Escape),
+                                ..
+                            },
+                        ..
+                    },
+                ..
+            } => control_flow.set_exit_with_code(0),
             _ => (),
         }
     });
