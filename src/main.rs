@@ -312,10 +312,11 @@ fn main() {
     println!("Windows size {:?}", window.inner_size());
 
     let mut last_frame = std::time::Instant::now();
+    let mut remake_swapchain = false;
     event_loop.run(move |event, _, control_flow| {
         control_flow.set_poll();
 
-        println!("Current event {:?} width current size {:?}", event, window.inner_size());
+        /* println!("Current event {:?} width current size {:?}", event, window.inner_size()); */
 
         platform.handle_event(imgui.io_mut(), &window, &event);
 
@@ -328,6 +329,11 @@ fn main() {
                 last_frame = now;
             }
             Event::MainEventsCleared => {
+                if remake_swapchain {
+                    let new_size = window.inner_size();
+                    remake_swapchain = false;
+                }
+
                 platform.prepare_frame(imgui.io_mut(), &window).unwrap();
                 {
                     let ui = imgui.frame();
@@ -469,6 +475,13 @@ fn main() {
                     },
                 ..
             } => control_flow.set_exit_with_code(0),
+            Event::WindowEvent {
+                event: WindowEvent::Resized(size),
+                ..
+            } => {
+                remake_swapchain = true;
+                println!("Need to resize swapchain {:?}", size);
+            }
             _ => (),
         }
     });
